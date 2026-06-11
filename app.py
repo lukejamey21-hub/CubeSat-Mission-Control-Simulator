@@ -1,6 +1,7 @@
 from argparse import Action
 from unittest import signals
 
+from altair import Latitude
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,33 +21,57 @@ with left:
     st.header("Control Panel")
 
     mission_hours = st.slider("Mission Duration (hours)", 6, 72, 24)
-    orbit_speed = st.slider("Orbit Speed", 1, 10, 3)
+    altitude = st.slider(
+        "Orbit Altitude (km)",
+        min_value=300,
+        max_value=1200,
+        value=500,
+    )
     battery_drain = st.slider("Battery Drain Rate", 1, 12, 4)
     solar_charge = st.slider("Solar Charge Rate", 0, 10, 3)
+    solar_panel_area = st.slider(
+        "Solar Panel Area (m²)",
+        min_value=0.01,
+        max_value=0.20,
+        value=0.05,
+    )
+
+    solar_efficiency = st.slider(
+        "Solar Panel Efficiency (%)",
+        min_value=10,
+        max_value=35,
+        value=25,
+    )
+
+    battery_capacity_wh = st.slider(
+        "Battery Capacity (Wh)",
+        min_value=20,
+        max_value=200,
+        value=80,
+    )
+
     signal_noise = st.slider("Signal Interference", 0, 80, 30)
     signal_noise = st.slider(
-    "Signal noise",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.1,
-    step=0.01
-)
+        "Signal noise",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.1,
+        step=0.01,
+    )
+
     payload = st.selectbox(
-    "payload mode",
-        [
-        "off",
-        "science payload",
-        "payload power"
-    ]
+        "Payload mode",
+        ["off", "science payload", "payload power"],
     )
 
     science_data = 0
     if payload == "science payload":
-        science_data = mission_hours * 3    
+        science_data = mission_hours * 3
         battery_drain += 2
     elif payload == "payload power":
         science_data = mission_hours
         battery_drain += 1
+
     launch = st.button("Launch Mission")
 
 with right:
@@ -55,14 +80,23 @@ with right:
     t = np.arange(0, mission_hours + 1, 1)
 
     # Orbit model - speed now visibly changes number of loops
-    angle = t * orbit_speed * 0.25
+    earth_radius = 6371
+    mu = 398600
+
+    orbit_radius = earth_radius + altitude
+    orbital_period = 2 * np.pi * np.sqrt(orbit_radius**3 / mu)
+    orbital_period_hours = orbital_period / 3600
+    orbit_speed = 2 * np.pi / orbital_period_hours
+    angle = orbit_speed * t
     x = np.cos(angle)
     y = np.sin(angle)
     st.divider()
     st.header("⚠️ Mission Event")
 
     # Sunlight/eclipse model
-    sunlight = np.sin(angle) > 0
+    eclipse_fraction = 0.35
+    orbit_phase = (t % orbital_period_hours) / orbital_period_hours
+    sunlight = orbit_phase > eclipse_fraction
 
     fuel = []
     fuel_level = 100
@@ -81,7 +115,7 @@ with right:
         charge = max(0, min(100, charge))
         battery.append(charge)
 
-        fuel_level -= orbit_speed * 0.03
+        fuel_level -= 0.03
         fuel_level = max(0, fuel_level)
 
         fuel.append(fuel_level)
@@ -91,6 +125,32 @@ with right:
     # Signal model - interference slider now clearly affects signal
     signal = 100 - (np.abs(np.sin(angle)) * signal_noise)
     signal = np.clip(signal, 0, 100)
+    # Realistic power budget model
+solar_constant = 1361  # W/m² from the Sun near Earth
+
+solar_power_generated = (
+    solar_constant
+    * solar_panel_area
+    * (solar_efficiency / 100)
+)
+
+base_satellite_power = 5  # W
+
+if payload == "science payload":
+    payload_power_required = 8
+
+elif payload == "payload power":
+    payload_power_required = 4
+
+else:
+    payload_power_required = 0
+
+total_power_required = base_satellite_power + payload_power_required
+
+if sunlight[-1]:
+    net_power = solar_power_generated - total_power_required
+else:
+    net_power = -total_power_required
     
     ground_stations = pd.DataFrame({
     "Station": ["Bristol", "Tokyo", "Houston"],
@@ -103,7 +163,8 @@ with right:
     col1.metric("Final Battery", f"{battery[-1]:.0f}%")
     col2.metric("Final Signal", f"{signal[-1]:.0f}%")
     col3.metric("Fuel", f"{fuel[-1]:.0f}%")
-    col4.metric("Orbit Speed", orbit_speed)
+    col4.metric("Altitude", f"{altitude} km")
+    col5.metric("Orbital Period", f"{orbital_period_hours:.2f} h")
     col5.metric("Mission Time", f"{mission_hours}h")
 
     if battery[-1] <= 0:
@@ -185,7 +246,7 @@ elif event == "Camera Overheating":
 
 elif event == "Reaction Wheel Fault":
     st.warning("Attitude control issue. Orbit stability reduced.")
-    orbit_speed = max(1, orbit_speed - 1)
+    signal_noise += 10
 
 elif event == "Extended Eclipse":
     st.warning("Longer eclipse period. Battery drain increased.")
