@@ -6,7 +6,7 @@ This project is designed as a beginner-friendly aerospace training tool that hel
 
 ## Live Demo
 
-Add live Streamlit link here.
+https://cubesat-mission-control-simulator.streamlit.app
 
 ## Project Overview
 
